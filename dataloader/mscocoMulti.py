@@ -6,6 +6,7 @@ import math
 import cv2
 import skimage
 import skimage.transform
+import imageio.v2 as imageio
 
 import torch
 import torch.utils.data as data
@@ -79,7 +80,8 @@ class MscocoMulti(data.Dataset):
             valid = joints[:, 2].copy()
 
         img = cv2.resize(bimg[min_y:max_y, min_x:max_x, :], (width, height))  
-        details = np.asarray([min_x - add, min_y - add, max_x - add, max_y - add]).astype(np.float)
+        # details = np.asarray([min_x - add, min_y - add, max_x - add, max_y - add]).astype(np.float)
+        details = np.asarray([min_x - add, min_y - add, max_x - add, max_y - add]).astype(float)    # by ydq
 
         if self.is_train:
             return img, joints, details
@@ -156,7 +158,8 @@ class MscocoMulti(data.Dataset):
             points = np.array(a['unit']['keypoints']).reshape(self.num_class, 3).astype(np.float32)
         gt_bbox = a['unit']['GT_bbox']
 
-        image = scipy.misc.imread(img_path, mode='RGB')
+        # image = scipy.misc.imread(img_path, mode='RGB')
+        image = imageio.imread(img_path)    # by ydq
         if self.is_train:
             image, points, details = self.augmentationCropImage(image, gt_bbox, points)
         else:

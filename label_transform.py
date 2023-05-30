@@ -64,5 +64,5 @@ def trans_anno(ori_file, target_file, is_val):
 			Make sure you have put annotation files into the right folder.'''
 			.format(ori_anno))
 
-trans_anno('person_keypoints_train2017.json', 'COCO_2017_train.json', False)
+# trans_anno('person_keypoints_train2017.json', 'COCO_2017_train.json', False)
 trans_anno('person_keypoints_val2017.json', 'COCO_2017_val.json', True)
