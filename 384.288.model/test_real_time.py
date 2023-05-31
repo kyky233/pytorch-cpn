@@ -100,7 +100,7 @@ def crop_image(img, bbox):
     """
     # check
     if img.shape[0] != 3:
-        raise Exception(f"input img should be [H, W, C]!")
+        raise Exception(f"input img should be [C, H, W], rather than {img.shape}!")
     if img.__class__.__name__ != 'Tensor':
         raise Exception(f"input img should be numpy format, rather than {img.__class__.__name__}!")
     if bbox.__class__.__name__ != 'Tensor':
@@ -129,7 +129,7 @@ def crop_image(img, bbox):
     y1_crop_ = torch.clamp(input=y1_crop, min=0, max=input_h)
     y2_crop_ = torch.clamp(input=y2_crop, min=0, max=input_h)
 
-    # crop it
+    # crop it, img[:, ]
     img_crop = img[:, y1_crop_:y2_crop_, x1_crop_:x2_crop_]
 
     # add zero padding
@@ -141,22 +141,43 @@ def crop_image(img, bbox):
     ]
     img_crop = F.pad(img_crop, padding, 0, 'constant')
 
-    return img_crop
+    bbox_crop = np.asarray([x1_crop_, y1_crop_, x2_crop_, y2_crop_]).astype(float)  # by ydq
+
+    return img_crop, bbox_crop
+
+
+def color_normalize(x, mean):
+    if x.size(0) == 1:
+        x = x.repeat(3, 1, 1)
+    normalized_mean = mean / 255
+    for t, m in zip(x, normalized_mean):
+        t.sub_(m)
+    return x
 
 
 def preprocess_image(img_path, bbox=None):
     """
     bbox: [x0, y0, x1, y1]
     """
-    with_vis = True
+    with_vis = False
+
     img_np = plt.imread(img_path)
 
     # transform
-    img_ts = transform(img_np)
+    img_ts = transform(img_np)  # [C, H, W]
 
     # here it will use gt bbox
     if bbox is not None:
-        img_ts = crop_image(img_ts, bbox)
+        img_ts, bbox_crop = crop_image(img_ts, bbox)    # [C, H, W]
+    else:
+        bbox_crop = None
+
+    # resize img
+    img_ts = F.resize(img_ts, size=target_size)
+
+    # normalize img
+    pixel_means = np.array([122.7717, 115.9465, 102.9801]) # RGB
+    # img_ts = color_normalize(img_ts, pixel_means)
 
     # vis
     if with_vis:
@@ -166,15 +187,14 @@ def preprocess_image(img_path, bbox=None):
         ax1 = fig.add_subplot(rows, cols, 1)
         ax1.imshow(img_np)
         ax2 = fig.add_subplot(rows, cols, 2)
-        img_ts = img_ts.permute(1, 2, 0)
-        img_ts_np = img_ts.detach().cpu().numpy()
+        img_ts_np = img_ts.permute(1, 2, 0).detach().cpu().numpy()
         ax2.imshow(img_ts_np)
 
         plt.show()
         plt.close()
 
     print(f"=> imaged is processed!")
-    return img_ts
+    return img_ts, bbox_crop
 
 
 def prepare_data(anno):
@@ -184,19 +204,19 @@ def prepare_data(anno):
     image_name = anno['imgInfo']['img_paths']
     img_path = os.path.join(img_dir, image_name)
 
-    gt_bbox = anno['unit']['GT_bbox']
+    bbox_gt = anno['unit']['GT_bbox']
     # np.array([gt_bbox[0], gt_bbox[1], gt_bbox[2], gt_bbox[3]])
 
     # preprocess img
-    img = preprocess_image(img_path, gt_bbox)
+    img_crop, bbox_crop = preprocess_image(img_path, bbox_gt)
 
-    return img
+    return img_crop, bbox_crop, img_path
 
 
 def main():
     print(f"=> begin...")
     # set params
-    idx = 5
+    idx = 3
     anno_name = 'COCO_2017_val.json'
 
     args = get_parse()
@@ -207,17 +227,18 @@ def main():
     model = load_model(args)
 
     # load img and paired anno
-    img = prepare_data(anno_all[idx])[None, :, :, :]   # [C, H, W] ---> [N, C, H, W]
+    img_crop, bbox_crop, img_path = prepare_data(anno_all[idx])
+    img_crop, bbox_crop = img_crop[None, :, :, :], bbox_crop[None, :]   # [C, H, W] ---> [N, C, H, W]
 
     # change to evaluation mode
     model.eval()
     with torch.no_grad():
         # compute output
-        global_outputs, refine_output = model(img)
-        score_map = refine_output.data.cpu()
-        score_map = score_map.numpy()
+        global_outputs, refine_output = model(img_crop)
+        score_map = refine_output.data.cpu().numpy()
 
-        for b in range(img.shape[0]):   # each img in a batch
+        single_result_all = []
+        for b in range(img_crop.shape[0]):   # each img in a batch
             single_result_dict = {}
             single_result = []
 
@@ -248,34 +269,32 @@ def main():
                     y += delta * py / ln
                 x = max(0, min(x, cfg.output_shape[1] - 1))
                 y = max(0, min(y, cfg.output_shape[0] - 1))
-                resy = float((4 * y + 2) / cfg.data_shape[0] * (details[b][3] - details[b][1]) + details[b][1])
-                resx = float((4 * x + 2) / cfg.data_shape[1] * (details[b][2] - details[b][0]) + details[b][0])
+                resy = float((4 * y + 2) / cfg.data_shape[0] * (bbox_crop[b][3] - bbox_crop[b][1]) + bbox_crop[b][1])
+                resx = float((4 * x + 2) / cfg.data_shape[1] * (bbox_crop[b][2] - bbox_crop[b][0]) + bbox_crop[b][0])
                 v_score[p] = float(r0[p, int(round(y)+1e-10), int(round(x)+1e-10)])
                 single_result.append(resx)
                 single_result.append(resy)
                 single_result.append(1)
+            single_result_all.append(single_result)
 
-            if len(single_result) != 0:
-                single_result_dict['image_id'] = int(ids[b])
-                single_result_dict['category_id'] = 1
-                single_result_dict['keypoints'] = single_result
-                single_result_dict['score'] = float(det_scores[b])*v_score.mean()
-                full_result.append(single_result_dict)
+    with_vis = True
+    if with_vis:
+        # pose
+        pose_2d = np.array(single_result_all[0]).reshape(n_joints, 3)[:, :2].astype(int)
+        fig = plt.figure()
+        rows, cols = 1, 2
+        ax1 = fig.add_subplot(rows, cols, 1)
+        img_np = plt.imread(img_path)
+        ax1.imshow(img_np)
+        ax1.plot(pose_2d[:, 0], pose_2d[:, 1], 'o', markersize=3, color='tab:blue')
+        ax1.set_title("Origin")
+        ax2 = fig.add_subplot(rows, cols, 2)
+        img_crop_np = img_crop[0].permute(1, 2, 0).detach().cpu().numpy()
+        ax2.imshow(img_crop_np)
+        ax2.set_title("Cropped")
 
-    result_path = args.result
-    if not isdir(result_path):
-        mkdir_p(result_path)
-    result_file = os.path.join(result_path, 'result.json')
-    with open(result_file,'w') as wf:
-        json.dump(full_result, wf)
-
-    # evaluate on COCO
-    eval_gt = COCO(cfg.ori_gt_path)
-    eval_dt = eval_gt.loadRes(result_file)
-    cocoEval = COCOeval(eval_gt, eval_dt, iouType='keypoints')
-    cocoEval.evaluate()
-    cocoEval.accumulate()
-    cocoEval.summarize()
+        plt.show()
+        plt.close()
 
 
 if __name__ == '__main__':
