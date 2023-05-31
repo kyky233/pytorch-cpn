@@ -16,7 +16,7 @@ from utils.imutils import *
 from utils.transforms import *
 
 class MscocoMulti(data.Dataset):
-    def __init__(self, cfg, train=True):
+    def __init__(self, cfg, train=True, small_group=None):
         self.img_folder = cfg.img_path
         self.is_train = train
         self.inp_res = cfg.data_shape
@@ -25,12 +25,14 @@ class MscocoMulti(data.Dataset):
         self.num_class = cfg.num_class
         self.cfg = cfg
         self.bbox_extend_factor = cfg.bbox_extend_factor
+        self.small_group = small_group
         if train:
             self.scale_factor = cfg.scale_factor
             self.rot_factor = cfg.rot_factor
             self.symmetry = cfg.symmetry
         with open(cfg.gt_path) as anno_file:   
             self.anno = json.load(anno_file)
+            print(f"annotation has been load from{anno_file}")
 
     def augmentationCropImage(self, img, bbox, joints=None):  
         height, width = self.inp_res[0], self.inp_res[1]
@@ -206,6 +208,9 @@ class MscocoMulti(data.Dataset):
             return img, meta
 
     def __len__(self):
-        return len(self.anno)
+        if self.small_group is None:
+            return len(self.anno)
+        else:
+            return self.small_group
 
 

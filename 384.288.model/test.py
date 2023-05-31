@@ -26,15 +26,19 @@ from networks import network
 from dataloader.mscocoMulti import MscocoMulti
 from tqdm import tqdm
 
+
 def main(args):
     # create model
     model = network.__dict__[cfg.model](cfg.output_shape, cfg.num_class, pretrained = False)
     model = torch.nn.DataParallel(model).cuda()
 
+    test_set = MscocoMulti(cfg, train=False, small_group=10)    # by ydq
+    print(f"=> dataset is created...")
     test_loader = torch.utils.data.DataLoader(
-        MscocoMulti(cfg, train=False),
-        batch_size=args.batch*args.num_gpus, shuffle=False,
-        num_workers=args.workers, pin_memory=True) 
+        test_set,
+        # batch_size=args.batch*args.num_gpus, shuffle=False,
+        batch_size=1*args.num_gpus, shuffle=False,
+        num_workers=args.workers, pin_memory=True)
 
     # load trainning weights
     checkpoint_file = os.path.join(args.checkpoint, args.test+'.pth.tar')
@@ -125,6 +129,8 @@ def main(args):
                     single_result_dict['score'] = float(det_scores[b])*v_score.mean()
                     full_result.append(single_result_dict)
 
+    print(f"=> finished test!")
+
     result_path = args.result
     if not isdir(result_path):
         mkdir_p(result_path)
@@ -133,12 +139,14 @@ def main(args):
         json.dump(full_result, wf)
 
     # evaluate on COCO
+    print(f"=>begin to evaluate on coco")
     eval_gt = COCO(cfg.ori_gt_path)
     eval_dt = eval_gt.loadRes(result_file)
     cocoEval = COCOeval(eval_gt, eval_dt, iouType='keypoints')
     cocoEval.evaluate()
     cocoEval.accumulate()
-    cocoEval.summarize()    
+    cocoEval.summarize()
+    print(f"=>coco evaluation finished!")
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='PyTorch CPN Test')
@@ -157,3 +165,5 @@ if __name__ == '__main__':
     parser.add_argument('-r', '--result', default='result', type=str,
                         help='path to save save result (default: result)')
     main(parser.parse_args())
+
+    print(f"=> this is the end!")
