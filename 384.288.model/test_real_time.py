@@ -1,3 +1,11 @@
+"""
+follow the auther preprocess method,
+
+in will be much better than my own !!!!!!
+
+by: ydq
+"""
+
 import os
 import sys
 import argparse
@@ -146,6 +154,48 @@ def crop_image(img, bbox):
     return img_crop, bbox_crop
 
 
+def augmentationCropImage(img, bbox):
+    bbox_extend_factor = [0.1, 0.15] # x, y
+    height, width = target_size
+    bbox = np.array(bbox).reshape(4, ).astype(np.float32)
+    add = max(img.shape[0], img.shape[1])
+
+    mean_value = pixel_means = np.array([122.7717, 115.9465, 102.9801]) # RGB
+    bimg = cv2.copyMakeBorder(img, add, add, add, add, borderType=cv2.BORDER_CONSTANT, value=mean_value.tolist())
+    objcenter = np.array([(bbox[0] + bbox[2]) / 2., (bbox[1] + bbox[3]) / 2.])
+    bbox += add
+    objcenter += add
+
+    crop_width = (bbox[2] - bbox[0]) * (1 + bbox_extend_factor[0] * 2)
+    crop_height = (bbox[3] - bbox[1]) * (1 + bbox_extend_factor[1] * 2)
+
+    if crop_height / height > crop_width / width:
+        crop_size = crop_height
+        min_shape = height
+    else:
+        crop_size = crop_width
+        min_shape = width
+
+    crop_size = min(crop_size, objcenter[0] / width * min_shape * 2. - 1.)
+    crop_size = min(crop_size, (bimg.shape[1] - objcenter[0]) / width * min_shape * 2. - 1)
+    crop_size = min(crop_size, objcenter[1] / height * min_shape * 2. - 1.)
+    crop_size = min(crop_size, (bimg.shape[0] - objcenter[1]) / height * min_shape * 2. - 1)
+
+    min_x = int(objcenter[0] - crop_size / 2. / min_shape * width)
+    max_x = int(objcenter[0] + crop_size / 2. / min_shape * width)
+    min_y = int(objcenter[1] - crop_size / 2. / min_shape * height)
+    max_y = int(objcenter[1] + crop_size / 2. / min_shape * height)
+
+    x_ratio = float(width) / (max_x - min_x)
+    y_ratio = float(height) / (max_y - min_y)
+
+    img = cv2.resize(bimg[min_y:max_y, min_x:max_x, :], (width, height))
+    # details = np.asarray([min_x - add, min_y - add, max_x - add, max_y - add]).astype(np.float)
+    details = np.asarray([min_x - add, min_y - add, max_x - add, max_y - add]).astype(float)    # by ydq
+
+    return img, details
+
+
 def color_normalize(x, mean):
     if x.size(0) == 1:
         x = x.repeat(3, 1, 1)
@@ -213,10 +263,35 @@ def prepare_data(anno):
     return img_crop, bbox_crop, img_path
 
 
+def follow_author_process(anno):
+    # load anno
+    img_dir = '/home/yandanqi/0_code/pose_estimation/pytorch-cpn/data/COCO2017/val2017'
+
+    # load data
+    image_name = anno['imgInfo']['img_paths']
+    img_path = os.path.join(img_dir, image_name)
+
+    bbox_gt = anno['unit']['GT_bbox']
+
+    img = plt.imread(img_path)
+
+    # crop
+    img_crop, details = augmentationCropImage(img, bbox_gt)
+
+    # to torch
+    img_crop = transform(img_crop)
+
+    # color normalize
+    pixel_means = np.array([122.7717, 115.9465, 102.9801])  # RGB
+    img_crop = color_normalize(img_crop, pixel_means)
+
+    return img_crop, details, img_path
+
+
 def main():
     print(f"=> begin...")
     # set params
-    idx = 3
+    idx = 5
     anno_name = 'COCO_2017_val.json'
 
     args = get_parse()
@@ -227,7 +302,8 @@ def main():
     model = load_model(args)
 
     # load img and paired anno
-    img_crop, bbox_crop, img_path = prepare_data(anno_all[idx])
+    # img_crop, bbox_crop, img_path = prepare_data(anno_all[idx])
+    img_crop, bbox_crop, img_path = follow_author_process(anno_all[idx])
     img_crop, bbox_crop = img_crop[None, :, :, :], bbox_crop[None, :]   # [C, H, W] ---> [N, C, H, W]
 
     # change to evaluation mode
